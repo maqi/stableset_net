@@ -17,13 +17,19 @@ use itertools::Itertools;
 use libp2p::mdns;
 use libp2p::{
     autonat::{self, NatStatus},
-    kad::{GetRecordOk, InboundRequest, Kademlia, KademliaEvent, QueryResult, K_VALUE},
+    kad::{
+        kbucket::Distance, GetRecordOk, InboundRequest, Kademlia, KademliaEvent, QueryResult,
+        K_VALUE,
+    },
     multiaddr::Protocol,
     request_response::{self, ResponseChannel as PeerResponseChannel},
     swarm::{behaviour::toggle::Toggle, DialError, NetworkBehaviour, SwarmEvent},
     Multiaddr, PeerId,
 };
-use sn_protocol::messages::{Request, Response};
+use sn_protocol::{
+    messages::{Request, Response},
+    NetworkAddress,
+};
 use sn_record_store::DiskBackedRecordStore;
 #[cfg(feature = "local-discovery")]
 use std::collections::hash_map;
@@ -390,9 +396,13 @@ impl SwarmDriver {
                 // TODO: send an error response back?
             }
             KademliaEvent::RoutingUpdated {
-                peer, is_new_peer, ..
+                peer,
+                is_new_peer,
+                bucket_range,
+                ..
             } => {
                 if is_new_peer {
+                    self.log_kbucket(&peer, bucket_range);
                     self.event_sender
                         .send(NetworkEvent::PeerAdded(peer))
                         .await?;
@@ -421,5 +431,28 @@ impl SwarmDriver {
         }
 
         Ok(())
+    }
+
+    fn log_kbucket(&mut self, peer: &PeerId, bucket_range: (Distance, Distance)) {
+        let distance = NetworkAddress::from_peer(self.self_peer_id)
+            .distance(&NetworkAddress::from_peer(*peer));
+        trace!("New peer {peer:?} has a distance to us {distance:?}({:?}) and range [{:?}({:?}), {:?}({:?})]",
+            distance.ilog2(), bucket_range.0, bucket_range.0.ilog2(), bucket_range.1, bucket_range.1.ilog2());
+        let mut kbucket_table_stats = vec![];
+        let mut index = 0;
+        let mut total_peers = 0;
+        for kbucket in self.swarm.behaviour_mut().kademlia.kbuckets() {
+            if !kbucket.is_empty() {
+                let range = kbucket.range();
+                total_peers += kbucket.num_entries();
+                let range_ilog2 = (range.0.ilog2(), range.1.ilog2());
+                kbucket_table_stats.push((index, kbucket.num_entries(), range_ilog2));
+            }
+            index += 1;
+        }
+        trace!(
+            "Current kBucketTable has {index:?} kbuckets containing {total_peers:?} peers, and stats for non-zero ones are: {:?}",
+            kbucket_table_stats
+        );
     }
 }
