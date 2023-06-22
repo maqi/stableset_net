@@ -23,7 +23,10 @@ use libp2p::{
     swarm::{behaviour::toggle::Toggle, DialError, NetworkBehaviour, SwarmEvent},
     Multiaddr, PeerId,
 };
-use sn_protocol::messages::{Request, Response};
+use sn_protocol::{
+    messages::{Request, Response},
+    NetworkAddress,
+};
 use sn_record_store::DiskBackedRecordStore;
 #[cfg(feature = "local-discovery")]
 use std::collections::hash_map;
@@ -393,6 +396,7 @@ impl SwarmDriver {
                 peer, is_new_peer, ..
             } => {
                 if is_new_peer {
+                    self.log_kbucket(&peer);
                     self.event_sender
                         .send(NetworkEvent::PeerAdded(peer))
                         .await?;
@@ -421,5 +425,31 @@ impl SwarmDriver {
         }
 
         Ok(())
+    }
+
+    fn log_kbucket(&mut self, peer: &PeerId) {
+        let distance = NetworkAddress::from_peer(self.self_peer_id)
+            .distance(&NetworkAddress::from_peer(*peer));
+        trace!(
+            "New peer {peer:?} has a {:?} distance to us",
+            distance.ilog2()
+        );
+        let mut kbucket_table_stats = vec![];
+        let mut index = 0;
+        let mut total_peers = 0;
+        for kbucket in self.swarm.behaviour_mut().kademlia.kbuckets() {
+            let range = kbucket.range();
+            total_peers += kbucket.num_entries();
+            if let Some(distance) = range.0.ilog2() {
+                kbucket_table_stats.push((index, kbucket.num_entries(), distance));
+            } else {
+                // This shall never happen.
+                error!("bucket #{index:?} is ourself ???!!!");
+            }
+            index += 1;
+        }
+        trace!(
+            "kBucketTable has {index:?} kbuckets {total_peers:?} peers, {kbucket_table_stats:?}"
+        );
     }
 }
