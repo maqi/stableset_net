@@ -69,8 +69,14 @@ impl Node {
         local: bool,
         root_dir: &Path,
     ) -> Result<RunningNode> {
+        let startup_peer = if let Some((peer_id, _multi_addr)) = initial_peers.clone().pop() {
+            Some(peer_id)
+        } else {
+            None
+        };
+
         let (network, mut network_event_receiver, swarm_driver) =
-            SwarmDriver::new(keypair, addr, local, root_dir)?;
+            SwarmDriver::new(keypair, startup_peer, addr, local, root_dir)?;
         let node_events_channel = NodeEventsChannel::default();
 
         let mut node = Self {

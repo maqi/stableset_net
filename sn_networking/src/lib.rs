@@ -125,6 +125,7 @@ impl SwarmDriver {
     /// Returns an error if there is a problem initializing the mDNS behaviour.
     pub fn new(
         keypair: Option<Keypair>,
+        startup_peer: Option<PeerId>,
         addr: SocketAddr,
         local: bool,
         root_dir: &Path,
@@ -160,7 +161,7 @@ impl SwarmDriver {
 
         let (network, events_receiver, mut swarm_driver) = Self::with(
             keypair,
-            None,
+            startup_peer,
             kad_cfg,
             local,
             false,
@@ -872,6 +873,7 @@ mod tests {
     async fn msg_to_self_should_not_error_out() -> Result<()> {
         init_test_logger();
         let (net, mut event_rx, driver) = SwarmDriver::new(
+            None,
             None,
             "0.0.0.0:0"
                 .parse::<SocketAddr>()
