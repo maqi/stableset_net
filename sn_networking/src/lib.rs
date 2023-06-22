@@ -160,6 +160,7 @@ impl SwarmDriver {
 
         let (network, events_receiver, mut swarm_driver) = Self::with(
             keypair,
+            None,
             kad_cfg,
             local,
             false,
@@ -184,6 +185,7 @@ impl SwarmDriver {
     pub fn new_client(
         local: bool,
         request_timeout: Option<Duration>,
+        startup_peer: Option<PeerId>,
     ) -> Result<(Network, mpsc::Receiver<NetworkEvent>, Self)> {
         // Create a Kademlia behaviour for client mode, i.e. set req/resp protocol
         // to outbound-only mode and don't listen on any address
@@ -202,6 +204,7 @@ impl SwarmDriver {
         Self::with(
             // clients use signer for transactions, but the network keypair is not used
             None,
+            startup_peer,
             kad_cfg,
             local,
             true,
@@ -218,6 +221,7 @@ impl SwarmDriver {
     /// Private helper to create the network components with the provided config and req/res behaviour
     fn with(
         keypair: Option<Keypair>,
+        startup_peer: Option<PeerId>,
         kad_cfg: KademliaConfig,
         local: bool,
         is_client: bool,
@@ -235,7 +239,25 @@ impl SwarmDriver {
             }
             None => {
                 info!("Generating a new keypair");
-                Keypair::generate_ed25519()
+                let mut keypair = Keypair::generate_ed25519();
+                if let Some(startup_peer_id) = startup_peer {
+                    info!("Always Generating a farthest keypair to the startup peer.");
+                    loop {
+                        let self_peer_id = PeerId::from(keypair.public());
+                        if let Some(255) = NetworkAddress::from_peer(self_peer_id)
+                            .distance(&NetworkAddress::from_peer(startup_peer_id))
+                            .ilog2()
+                        {
+                            info!("Got a farthest keypair to the startup peer.");
+                            break;
+                        } else {
+                            info!("Regenerating a farthest keypair to the startup peer.");
+                            keypair = Keypair::generate_ed25519();
+                        }
+                    }
+                }
+
+                keypair
 
                 // TODO: store this somewhere? or just regenerate on every run?
                 // How would we validate storage location + what to do if one exists?

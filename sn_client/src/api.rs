@@ -61,8 +61,18 @@ impl Client {
 
         info!("Starting Kad swarm in client mode...");
 
+        let startup_peer = if let Some(mut startup_peers) = peers.clone() {
+            if let Some((peer_id, _multi_addr)) = startup_peers.pop() {
+                Some(peer_id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let (network, mut network_event_receiver, swarm_driver) =
-            SwarmDriver::new_client(local, req_response_timeout)?;
+            SwarmDriver::new_client(local, req_response_timeout, startup_peer)?;
         info!("Client constructed network and swarm_driver");
         let events_channel = ClientEventsChannel::default();
 
