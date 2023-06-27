@@ -106,6 +106,7 @@ pub struct SwarmDriver {
     replication_fetcher: ReplicationFetcher,
     local: bool,
     dialed_peers: CircularVec<PeerId>,
+    is_client: bool,
 }
 
 impl SwarmDriver {
@@ -359,6 +360,7 @@ impl SwarmDriver {
             replication_fetcher: Default::default(),
             local,
             dialed_peers: CircularVec::new(63),
+            is_client,
         };
 
         Ok((
