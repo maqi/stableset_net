@@ -157,6 +157,15 @@ impl NodeBuilder {
         // Run the node
         node.run(swarm_driver, network_event_receiver);
 
+        // The subscription shall be undertaken by the nodes that really interested in
+        // royalty payment transfer related cash_notes.
+        for group_index in 0..256 {
+            let topic = format!("{ROYALTY_TRANSFER_NOTIF_TOPIC}_GROUP_{group_index}");
+            running_node
+                .subscribe_to_topic(topic.clone())
+                .map(|()| info!("Node has been subscribed to gossipsub topic '{topic}' to receive network royalties payments notifications."))?;
+        }
+
         Ok(running_node)
     }
 }
@@ -389,6 +398,8 @@ impl Node {
             }
             NetworkEvent::GossipsubMsgReceived { topic, msg }
             | NetworkEvent::GossipsubMsgPublished { topic, msg } => {
+                trace!("Received a gossip msg for the topic of {topic}");
+
                 if self.events_channel.receiver_count() > 0 {
                     // TODO: shall record which topics this network instance subscribed.
                     //       currently just using a wild match
