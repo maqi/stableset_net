@@ -19,6 +19,7 @@ open-metrics=["libp2p/metrics", "prometheus-client", "hyper", "sysinfo"]
 [dependencies]
 async-trait = "0.1"
 bytes = { version = "1.0.1", features = ["serde"] }
+hex = "~0.4.3"
 futures = "~0.3.13"
 hyper = { version = "0.14", features = ["server", "tcp", "http1"], optional = true}
 itertools = "~0.11.0"
