@@ -533,6 +533,7 @@ fn calculate_cost_for_relevant_records(step: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use sn_protocol::{PrettyPrintKBucketKey, PrettyPrintRecordKey};
+    use std::io::{self, BufRead};
     use std::time::Duration;
 
     use super::*;
@@ -544,7 +545,7 @@ mod tests {
     };
     use quickcheck::*;
     use sn_protocol::storage::try_serialize_record;
-    use std::str::FromStr;
+    use std::{collections::BTreeMap, fs::File, str::FromStr};
     use tokio::runtime::Runtime;
 
     const MULITHASH_CODE: u64 = 0x12;
@@ -852,7 +853,6 @@ mod tests {
 
         Ok(())
     }
-
 
     #[test]
     fn gg() {
@@ -4522,7 +4522,10 @@ mod tests {
         for stored_key in stored_record_keys.iter() {
             let pretty_key = PrettyPrintRecordKey::from(stored_key);
 
-            println!("stored record is {pretty_key:?}, hex_string is {:?}", NodeRecordStore::key_to_hex(stored_key));
+            println!(
+                "stored record is {pretty_key:?}, hex_string is {:?}",
+                NodeRecordStore::key_to_hex(stored_key)
+            );
         }
 
         let failed_puts = failed_puts
@@ -4549,11 +4552,144 @@ mod tests {
         for failed in failed_puts {
             let incoming_record_key = KBucketKey::from(failed.to_vec());
             let in_dist = incoming_record_key.distance(&node_id_k);
-            if in_dist < exist_dist
-            {
+            if in_dist < exist_dist {
                 let in_coming = PrettyPrintKBucketKey(incoming_record_key);
                 println!("incoming {in_coming:?} is closer to {node_id:?} than {furthest_pretty:?}, in_dst {in_dist:?} < exist_dist {exist_dist:?}");
             }
         }
-    }    
+    }
+
+    #[test]
+    fn analyse_peer_list() {
+        // file shall be within the `sn_networking` folder
+        let path = Path::new("./").join("new_bootstrap_peers.log");
+
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(err) => panic!("Failed to readin file. {err:?}"),
+        };
+        let reader = io::BufReader::new(file);
+
+        let mut peers = Vec::new();
+        let mut total_map = Vec::new();
+        for line in reader.lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(err) => {
+                    println!("Failed to read in a line {err:?}");
+                    continue;
+                }
+            };
+
+            let peer_index = peers.len();
+            let mut table_map = BTreeMap::new();
+
+            let segments: Vec<&str> = line.split('/').collect();
+            for segment in segments {
+                if segment.contains("12D3KooW") {
+                    let node_id = PeerId::from_str(segment).unwrap();
+                    let node_id_k_from_peer = KBucketKey::from(node_id.clone());
+                    peers.push((node_id, node_id_k_from_peer));
+                }
+                if segment.contains("kBucketTable") {
+                    let table_string: Vec<&str> = segment.split(", [").collect();
+                    let table_entries: Vec<&str> = table_string[1]
+                        .split(|c| c == '(' || c == ',' || c == ')' || c == ' ')
+                        .filter(|s| !s.is_empty())
+                        .collect();
+
+                    let mut index = 1;
+                    while index < table_entries.len() {
+                        let num_of_peers: usize =
+                            table_entries[index].parse().expect("Not a valid integer");
+                        let distant: usize = table_entries[index + 1]
+                            .parse()
+                            .expect("Not a valid integer");
+                        index += 3;
+                        let _ = table_map.insert(distant, num_of_peers);
+                    }
+                }
+            }
+
+            if peer_index == peers.len() || table_map.is_empty() {
+                println!("Cannot parse a peer_id from line: {line:?}");
+                continue;
+            }
+            // Still push an empty table_map in to ensure indexing are synced.
+            if table_map.is_empty() {
+                println!("Cannot parse a table_map from line: {line:?}");
+            }
+            total_map.push(table_map);
+        }
+
+        let mut expected_total_map: Vec<BTreeMap<usize, usize>> =
+            (0..peers.len()).map(|_| BTreeMap::new()).collect();
+        for i in 0..(peers.len() - 1) {
+            for j in (i + 1)..peers.len() {
+                let common_leading_bits =
+                    common_leading_bits(peers[i].1.hashed_bytes(), peers[j].1.hashed_bytes());
+                let ilog2 = 255 - common_leading_bits;
+
+                let num_i = expected_total_map[i].entry(ilog2).or_insert(0);
+                if *num_i < 20 {
+                    *num_i = *num_i + 1;
+                }
+
+                let num_j = expected_total_map[j].entry(ilog2).or_insert(0);
+                if *num_j < 20 {
+                    *num_j = *num_j + 1;
+                }
+            }
+
+            if total_map[i] != expected_total_map[i] {
+                println!("Node {:?} has different RT to expected: ", peers[i].0);
+                println!("\t\t real RT: {:?}", total_map[i]);
+                println!("\t\texpected: {:?}", expected_total_map[i]);
+            }
+        }
+
+        let real_discovered_peers: Vec<usize> = total_map
+            .iter()
+            .map(|kbuckets| kbuckets.values().sum())
+            .collect();
+        let expected_total_discovered_peers: usize = expected_total_map
+            .iter()
+            .map(|kbuckets| kbuckets.values().sum::<usize>())
+            .sum();
+        println!(
+            "Average discovered peers is {:?}",
+            real_discovered_peers.iter().sum::<usize>() / total_map.len()
+        );
+        println!(
+            "Expected average discovered peers is {:?}",
+            expected_total_discovered_peers / total_map.len()
+        );
+
+        let mut index = 0;
+        for i in 0..real_discovered_peers.len() {
+            if real_discovered_peers[i] > real_discovered_peers[index] {
+                index = i;
+            }
+        }
+        println!(
+            "The peer {:?} discovered most peers {}",
+            peers[index], real_discovered_peers[index]
+        );
+
+        assert!(!total_map.is_empty());
+        assert_eq!(peers.len(), total_map.len());
+    }
+
+    /// Returns the length of the common leading bits.
+    /// e.g. when `11110000` and `11111111`, return as 4.
+    /// Note: the length of two shall be the same
+    fn common_leading_bits(one: &[u8], two: &[u8]) -> usize {
+        for byte_index in 0..one.len() {
+            if one[byte_index] != two[byte_index] {
+                return (byte_index * 8)
+                    + (one[byte_index] ^ two[byte_index]).leading_zeros() as usize;
+            }
+        }
+        8 * one.len()
+    }
 }
