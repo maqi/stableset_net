@@ -4572,6 +4572,7 @@ mod tests {
 
         let mut peers = Vec::new();
         let mut total_map = Vec::new();
+        let mut total_discovered_peers: HashMap<PeerId, usize> = Default::default();
         for line in reader.lines() {
             let line = match line {
                 Ok(line) => line,
@@ -4611,10 +4612,22 @@ mod tests {
                 }
             }
 
-            if peer_index == peers.len() || table_map.is_empty() {
+            if peer_index == peers.len() {
                 println!("Cannot parse a peer_id from line: {line:?}");
                 continue;
             }
+
+            let discovered_peers = table_map.values().sum();
+            match total_discovered_peers.insert(peers[peer_index].0, discovered_peers) {
+                Some(previous_discovered) => {
+                    if previous_discovered > discovered_peers {
+                        let _ =
+                            total_discovered_peers.insert(peers[peer_index].0, previous_discovered);
+                    }
+                }
+                None => {}
+            }
+
             // Still push an empty table_map in to ensure indexing are synced.
             if table_map.is_empty() {
                 println!("Cannot parse a table_map from line: {line:?}");
@@ -4629,6 +4642,10 @@ mod tests {
                 let common_leading_bits =
                     common_leading_bits(peers[i].1.hashed_bytes(), peers[j].1.hashed_bytes());
                 let ilog2 = 255 - common_leading_bits;
+
+                if common_leading_bits > 255 {
+                    println!("common_leading_bits {common_leading_bits:?} of {:?} and {:?} is incorrect, with index i {i:?} and j {j:?}", peers[i].0, peers[j].1);
+                }
 
                 let num_i = expected_total_map[i].entry(ilog2).or_insert(0);
                 if *num_i < 20 {
@@ -4674,6 +4691,12 @@ mod tests {
         println!(
             "The peer {:?} discovered most peers {}",
             peers[index], real_discovered_peers[index]
+        );
+
+        let total_filtered_discoved_peers: usize = total_discovered_peers.values().sum();
+        println!(
+            "Filtered average discovered peers is {:?}",
+            total_filtered_discoved_peers / total_discovered_peers.len()
         );
 
         assert!(!total_map.is_empty());
