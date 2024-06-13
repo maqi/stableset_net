@@ -222,18 +222,28 @@ impl SpendDagDb {
         // beta rewards processing
         let self_clone = self.clone();
         let spend_processing = if let Some(sk) = self.encryption_sk.clone() {
-            let (tx, mut rx) = tokio::sync::mpsc::channel(SPENDS_PROCESSING_BUFFER_SIZE);
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<(SignedSpend, u64, bool)>(SPENDS_PROCESSING_BUFFER_SIZE);
             tokio::spawn(async move {
+                let mut double_spends = BTreeSet::new();
+
                 while let Some((spend, utxos_for_further_track, is_double_spend)) = rx.recv().await
                 {
                     if is_double_spend {
                         self_clone
                             .beta_background_process_double_spend(
-                                spend,
+                                spend.clone(),
                                 &sk,
                                 utxos_for_further_track,
                             )
                             .await;
+
+                        // For double_spend, only credit the owner first time
+                        // The performance track only count the received spend & utxos once.
+                        if double_spends.insert(spend.address()) {
+                            self_clone
+                                .beta_background_process_spend(spend, &sk, utxos_for_further_track)
+                                .await;
+                        }
                     } else {
                         self_clone
                             .beta_background_process_spend(spend, &sk, utxos_for_further_track)
